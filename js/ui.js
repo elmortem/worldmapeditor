@@ -174,17 +174,34 @@ App.ui.updateProperties = function() {
 				App.state.pushUndo();
 				obj.params.biomeType = val;
 				App.renderer.render();
-			}, ['tundra', 'taiga', 'swamp', 'forest', 'plains', 'fjord']);
+			}, ['tundra', 'taiga', 'swamp', 'forest', 'plains', 'fjord', 'desert', 'jungle', 'savanna', 'steppe']);
 			App.ui.addField(content, 'Density', 'range', params.density || 0.5, function(val) {
 				App.state.pushUndo();
 				obj.params.density = parseFloat(val);
 				App.renderer.render();
 			}, { min: 0.1, max: 1.0, step: 0.1 });
+			App.ui.addField(content, 'Element Scale', 'range', params.elementScale || 1.0, function(val) {
+				App.state.pushUndo();
+				obj.params.elementScale = parseFloat(val);
+				App.renderer.render();
+			}, { min: 0.2, max: 3.0, step: 0.1 });
 			App.ui.addField(content, 'Opacity', 'range', params.opacity || 0.3, function(val) {
 				App.state.pushUndo();
 				obj.params.opacity = parseFloat(val);
 				App.renderer.render();
 			}, { min: 0.05, max: 1.0, step: 0.05 });
+			App.ui.addField(content, 'BG Color', 'color', params.bgColor || '#8fbc8f', function(val) {
+				App.state.pushUndo();
+				if (!obj.params) obj.params = {};
+				obj.params.bgColor = val;
+				App.renderer.render();
+			});
+			App.ui.addField(content, 'BG Opacity', 'range', params.bgOpacity || 0, function(val) {
+				App.state.pushUndo();
+				if (!obj.params) obj.params = {};
+				obj.params.bgOpacity = parseFloat(val);
+				App.renderer.render();
+			}, { min: 0, max: 1.0, step: 0.05 });
 			break;
 
 		case 'river':
@@ -221,6 +238,11 @@ App.ui.updateProperties = function() {
 				obj.params.density = parseFloat(val);
 				App.renderer.render();
 			}, { min: 0.1, max: 2.0, step: 0.1 });
+			App.ui.addField(content, 'Peak Scale', 'range', params.peakScale || 1.0, function(val) {
+				App.state.pushUndo();
+				obj.params.peakScale = parseFloat(val);
+				App.renderer.render();
+			}, { min: 0.2, max: 5.0, step: 0.1 });
 			App.ui.addField(content, 'Height Variation', 'range', params.heightVariation || 0.4, function(val) {
 				App.state.pushUndo();
 				obj.params.heightVariation = parseFloat(val);

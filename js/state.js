@@ -96,7 +96,10 @@ App.state.getDefaultParams = function(type) {
 				biomeType: 'forest',
 				fillPattern: '',
 				density: 0.5,
-				opacity: 0.3
+				opacity: 0.3,
+				elementScale: 1.0,
+				bgColor: '',
+				bgOpacity: 0
 			};
 		case 'river':
 			return {
@@ -113,6 +116,7 @@ App.state.getDefaultParams = function(type) {
 				heightVariation: 0.4,
 				fadeStart: 0.1,
 				fadeEnd: 0.15,
+				peakScale: 1.0,
 				labelSize: 'medium'
 			};
 		case 'marker':

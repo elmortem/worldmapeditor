@@ -8,6 +8,7 @@ App.renderer.SVG_NS = 'http://www.w3.org/2000/svg';
 
 App.renderer._segmentCache = {};
 App.renderer._patchedPolylines = {};
+App.renderer._regionPolygons = [];
 
 App.renderer.sampleClosed = function(points) {
 	var sps = App.renderer.SAMPLES_PER_SEGMENT;
@@ -32,10 +33,28 @@ App.renderer.sampleClosed = function(points) {
 	return allSampled;
 };
 
+App.renderer.isInsideAnyRegion = function(x, y) {
+	var polys = App.renderer._regionPolygons;
+	for (var i = 0; i < polys.length; i++) {
+		if (App.spline.pointInPolygon(x, y, polys[i])) {
+			return true;
+		}
+	}
+	return false;
+};
+
 App.renderer.computeSharedBorders = function() {
 	App.renderer._patchedPolylines = {};
+	App.renderer._regionPolygons = [];
 
 	if (!App.state.map) return;
+
+	for (var ri = 0; ri < App.state.map.objects.length; ri++) {
+		var rObj = App.state.map.objects[ri];
+		if (rObj.type === 'region' && rObj.points && rObj.points.length >= 2) {
+			App.renderer._regionPolygons.push(App.renderer.sampleClosed(rObj.points));
+		}
+	}
 
 	var closedTypes = ['sea', 'region', 'lake'];
 	var layerPriority = { 'sea': 0, 'region': 1, 'lake': 2 };
@@ -435,13 +454,27 @@ App.renderer.renderBiome = function(obj) {
 	g.setAttribute('opacity', String(params.opacity || 0.3));
 
 	var sampled = App.renderer.sampleClosed(obj.points);
+
+	if (params.bgColor && params.bgOpacity > 0) {
+		var bgPath = document.createElementNS(App.renderer.SVG_NS, 'path');
+		var bgD = App.spline.pointsToSvgPath(sampled, true);
+		bgPath.setAttribute('d', bgD);
+		bgPath.setAttribute('fill', params.bgColor);
+		bgPath.setAttribute('fill-opacity', String(params.bgOpacity));
+		bgPath.setAttribute('stroke', 'none');
+		g.appendChild(bgPath);
+	}
+
 	var bounds = App.spline.getBounds(sampled);
 	var biomeType = params.biomeType || 'forest';
 	var density = params.density || 0.5;
+	var elementScale = params.elementScale || 1.0;
 
-	var spacing = 25 / density;
+	var spacing = 12 / density;
 	var seed = App.state.map ? App.state.map.seed || 0 : 0;
 	var idx = 0;
+
+	var elements = [];
 
 	for (var gx = bounds.minX; gx <= bounds.maxX; gx += spacing) {
 		for (var gy = bounds.minY; gy <= bounds.maxY; gy += spacing) {
@@ -453,23 +486,30 @@ App.renderer.renderBiome = function(obj) {
 			idx++;
 
 			if (!App.spline.pointInPolygon(px, py, sampled)) continue;
+			if (!App.renderer.isInsideAnyRegion(px, py)) continue;
 
-			var el = App.renderer.renderBiomeElement(biomeType, px, py, rnd3, seed + idx);
+			var el = App.renderer.renderBiomeElement(biomeType, px, py, rnd3, seed + idx, elementScale);
 			if (el) {
-				g.appendChild(el);
+				elements.push({ y: py, el: el });
 			}
 		}
+	}
+
+	elements.sort(function(a, b) { return a.y - b.y; });
+	for (var ei = 0; ei < elements.length; ei++) {
+		g.appendChild(elements[ei].el);
 	}
 
 	return g;
 };
 
-App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
+App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed, elementScale) {
 	var NS = App.renderer.SVG_NS;
+	var es = elementScale || 1.0;
 
 	switch (biomeType) {
 		case 'forest': {
-			var scale = 0.7 + rnd * 0.6;
+			var scale = (0.7 + rnd * 0.6) * es;
 			var treeG = document.createElementNS(NS, 'g');
 			treeG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + scale.toFixed(2) + ')');
 			var crown = document.createElementNS(NS, 'circle');
@@ -489,7 +529,7 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 			return treeG;
 		}
 		case 'taiga': {
-			var sc = 0.6 + rnd * 0.5;
+			var sc = (0.6 + rnd * 0.5) * es;
 			var tg = document.createElementNS(NS, 'g');
 			tg.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + sc.toFixed(2) + ')');
 			var tree = document.createElementNS(NS, 'path');
@@ -508,7 +548,8 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 		}
 		case 'tundra': {
 			var tundraG = document.createElementNS(NS, 'g');
-			tundraG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ')');
+			var tsc = es;
+			tundraG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + tsc.toFixed(2) + ')');
 			var r2 = App.noise.seededRandom(seed + 99);
 			for (var di = 0; di < 3; di++) {
 				var dot = document.createElementNS(NS, 'circle');
@@ -524,7 +565,8 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 		}
 		case 'swamp': {
 			var swG = document.createElementNS(NS, 'g');
-			swG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ')');
+			var swsc = es;
+			swG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + swsc.toFixed(2) + ')');
 			var wave = document.createElementNS(NS, 'path');
 			var ww = 6 + rnd * 4;
 			wave.setAttribute('d', 'M' + (-ww) + ' 0 Q' + (-ww/2) + ' -3 0 0 Q' + (ww/2) + ' 3 ' + ww + ' 0');
@@ -551,7 +593,8 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 		}
 		case 'plains': {
 			var plG = document.createElementNS(NS, 'g');
-			plG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ')');
+			var plsc = es;
+			plG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + plsc.toFixed(2) + ')');
 			for (var gi = 0; gi < 3; gi++) {
 				var grass = document.createElementNS(NS, 'line');
 				var gx2 = (gi - 1) * 3 + (rnd - 0.5) * 2;
@@ -569,7 +612,8 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 		}
 		case 'fjord': {
 			var fjG = document.createElementNS(NS, 'g');
-			fjG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ')');
+			var fjsc = es;
+			fjG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + fjsc.toFixed(2) + ')');
 			var rock = document.createElementNS(NS, 'path');
 			var rw = 3 + rnd * 3;
 			var rh = 4 + rnd * 5;
@@ -579,6 +623,102 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed) {
 			rock.setAttribute('stroke-width', '0.5');
 			fjG.appendChild(rock);
 			return fjG;
+		}
+		case 'desert': {
+			var desG = document.createElementNS(NS, 'g');
+			var dsc = es;
+			desG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + dsc.toFixed(2) + ')');
+			if (rnd > 0.6) {
+				var cactus = document.createElementNS(NS, 'path');
+				cactus.setAttribute('d', 'M0 0 L0 -8 M-3 -5 L-3 -3 L0 -3 M3 -6 L3 -4 L0 -4');
+				cactus.setAttribute('fill', 'none');
+				cactus.setAttribute('stroke', '#4a7a3a');
+				cactus.setAttribute('stroke-width', '2');
+				cactus.setAttribute('stroke-linecap', 'round');
+				desG.appendChild(cactus);
+			} else {
+				var dune = document.createElementNS(NS, 'path');
+				var dw = 5 + rnd * 5;
+				dune.setAttribute('d', 'M' + (-dw) + ' 0 Q0 ' + (-3 - rnd * 3) + ' ' + dw + ' 0');
+				dune.setAttribute('fill', '#d4b876');
+				dune.setAttribute('stroke', '#c4a866');
+				dune.setAttribute('stroke-width', '0.5');
+				desG.appendChild(dune);
+			}
+			return desG;
+		}
+		case 'jungle': {
+			var jscale = (0.8 + rnd * 0.7) * es;
+			var jG = document.createElementNS(NS, 'g');
+			jG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + jscale.toFixed(2) + ')');
+			var jtrunk = document.createElementNS(NS, 'line');
+			jtrunk.setAttribute('x1', '0');
+			jtrunk.setAttribute('y1', '2');
+			jtrunk.setAttribute('x2', '0');
+			jtrunk.setAttribute('y2', '6');
+			jtrunk.setAttribute('stroke', '#5C3A1E');
+			jtrunk.setAttribute('stroke-width', '2.5');
+			jG.appendChild(jtrunk);
+			var jcrown = document.createElementNS(NS, 'ellipse');
+			jcrown.setAttribute('cx', '0');
+			jcrown.setAttribute('cy', '-3');
+			jcrown.setAttribute('rx', '7');
+			jcrown.setAttribute('ry', '5');
+			jcrown.setAttribute('fill', '#1a6a1a');
+			jG.appendChild(jcrown);
+			var r3 = App.noise.seededRandom(seed + 55);
+			var jcrown2 = document.createElementNS(NS, 'circle');
+			jcrown2.setAttribute('cx', String(-3 + r3 * 2));
+			jcrown2.setAttribute('cy', '-5');
+			jcrown2.setAttribute('r', '4');
+			jcrown2.setAttribute('fill', '#2d8a2d');
+			jG.appendChild(jcrown2);
+			return jG;
+		}
+		case 'savanna': {
+			var sascale = (0.7 + rnd * 0.6) * es;
+			var saG = document.createElementNS(NS, 'g');
+			saG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + sascale.toFixed(2) + ')');
+			var satrunk = document.createElementNS(NS, 'line');
+			satrunk.setAttribute('x1', '0');
+			satrunk.setAttribute('y1', '0');
+			satrunk.setAttribute('x2', String((rnd - 0.5) * 2));
+			satrunk.setAttribute('y2', '-10');
+			satrunk.setAttribute('stroke', '#7a5a2a');
+			satrunk.setAttribute('stroke-width', '1.5');
+			saG.appendChild(satrunk);
+			var sacrown = document.createElementNS(NS, 'ellipse');
+			sacrown.setAttribute('cx', String((rnd - 0.5) * 2));
+			sacrown.setAttribute('cy', '-11');
+			sacrown.setAttribute('rx', '8');
+			sacrown.setAttribute('ry', '3');
+			sacrown.setAttribute('fill', '#6a8a2a');
+			saG.appendChild(sacrown);
+			return saG;
+		}
+		case 'steppe': {
+			var stG = document.createElementNS(NS, 'g');
+			var stsc = es;
+			stG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + stsc.toFixed(2) + ')');
+			var bush = document.createElementNS(NS, 'ellipse');
+			bush.setAttribute('cx', '0');
+			bush.setAttribute('cy', '-2');
+			bush.setAttribute('rx', String(3 + rnd * 2));
+			bush.setAttribute('ry', String(2 + rnd * 1.5));
+			bush.setAttribute('fill', '#8a9a4a');
+			stG.appendChild(bush);
+			var r4 = App.noise.seededRandom(seed + 77);
+			if (r4 > 0.5) {
+				var stem = document.createElementNS(NS, 'line');
+				stem.setAttribute('x1', String((rnd - 0.5) * 3));
+				stem.setAttribute('y1', '-3');
+				stem.setAttribute('x2', String((rnd - 0.5) * 4));
+				stem.setAttribute('y2', String(-5 - rnd * 2));
+				stem.setAttribute('stroke', '#7a8a3a');
+				stem.setAttribute('stroke-width', '0.8');
+				stG.appendChild(stem);
+			}
+			return stG;
 		}
 		default:
 			return null;
@@ -621,6 +761,10 @@ App.renderer.renderRiver = function(obj) {
 	g.setAttribute('data-id', obj.id);
 
 	for (var s = 0; s < sampled.length - 1; s++) {
+		var midX = (sampled[s].x + sampled[s + 1].x) / 2;
+		var midY = (sampled[s].y + sampled[s + 1].y) / 2;
+		if (!App.renderer.isInsideAnyRegion(midX, midY)) continue;
+
 		var t1 = s / (sampled.length - 1);
 		var w = widthStart + (widthEnd - widthStart) * t1;
 		var seg = document.createElementNS(App.renderer.SVG_NS, 'line');
@@ -655,10 +799,12 @@ App.renderer.renderMountain = function(obj) {
 	var heightVar = params.heightVariation || 0.4;
 	var fadeStart = params.fadeStart || 0.1;
 	var fadeEnd = params.fadeEnd || 0.15;
+	var peakScale = params.peakScale || 1.0;
 
 	var g = document.createElementNS(App.renderer.SVG_NS, 'g');
 	g.setAttribute('data-id', obj.id);
 
+	var peaks = [];
 	var dist = 0;
 	var peakIndex = 0;
 	for (var j = 1; j < sampled.length; j++) {
@@ -696,9 +842,16 @@ App.renderer.renderMountain = function(obj) {
 			var px = sampled[j].x + nx * offsetDist;
 			var py = sampled[j].y + ny * offsetDist;
 
-			var baseH = 15;
+			if (!App.renderer.isInsideAnyRegion(px, py)) {
+				peakIndex++;
+				continue;
+			}
+
+			var baseH = 15 * peakScale;
 			var h = baseH * (1 + (rnd - 0.5) * heightVar * 2) * fade;
 			var w2 = h * 0.6;
+
+			var peakG = document.createElementNS(App.renderer.SVG_NS, 'g');
 
 			var peak = document.createElementNS(App.renderer.SVG_NS, 'path');
 			peak.setAttribute('d',
@@ -708,7 +861,7 @@ App.renderer.renderMountain = function(obj) {
 			peak.setAttribute('fill', '#8B7355');
 			peak.setAttribute('stroke', '#5C4A32');
 			peak.setAttribute('stroke-width', '0.5');
-			g.appendChild(peak);
+			peakG.appendChild(peak);
 
 			var snowH = h * 0.3;
 			var snowW = w2 * 0.4;
@@ -719,10 +872,16 @@ App.renderer.renderMountain = function(obj) {
 				' L ' + (px + snowW).toFixed(2) + ' ' + (py - h + snowH).toFixed(2) + ' Z');
 			snow.setAttribute('fill', '#fff');
 			snow.setAttribute('stroke', 'none');
-			g.appendChild(snow);
+			peakG.appendChild(snow);
 
+			peaks.push({ y: py, el: peakG });
 			peakIndex++;
 		}
+	}
+
+	peaks.sort(function(a, b) { return a.y - b.y; });
+	for (var pi = 0; pi < peaks.length; pi++) {
+		g.appendChild(peaks[pi].el);
 	}
 
 	return g;
