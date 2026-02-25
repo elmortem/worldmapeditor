@@ -107,6 +107,7 @@ App.storage.applyMapData = function(mapData) {
 	if (App.ui) {
 		App.ui.updateObjectList();
 		App.ui.updateProperties();
+		App.ui.updateMapSeed();
 		App.ui.updateStatus();
 	}
 };

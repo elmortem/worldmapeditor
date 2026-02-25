@@ -232,6 +232,28 @@ App.renderer.computeSharedBorders = function() {
 	}
 };
 
+App.renderer.createRegionClipPath = function(defs) {
+	var clip = document.createElementNS(App.renderer.SVG_NS, 'clipPath');
+	clip.setAttribute('id', 'region-clip');
+
+	var objects = App.state.map.objects;
+	for (var i = 0; i < objects.length; i++) {
+		var obj = objects[i];
+		if (obj.type !== 'region') continue;
+		if (!obj.points || obj.points.length < 2) continue;
+
+		var displaced = App.renderer._patchedPolylines[obj.id];
+		if (!displaced) continue;
+
+		var d = App.spline.pointsToSvgPath(displaced, true);
+		var path = document.createElementNS(App.renderer.SVG_NS, 'path');
+		path.setAttribute('d', d);
+		clip.appendChild(path);
+	}
+
+	defs.appendChild(clip);
+};
+
 App.renderer.render = function() {
 	App.renderer._segmentCache = {};
 
@@ -244,6 +266,7 @@ App.renderer.render = function() {
 
 	App.renderer.computeSharedBorders();
 	App.renderer.renderDefs(defs);
+	App.renderer.createRegionClipPath(defs);
 
 	var layerOrder = ['sea', 'region', 'biome', 'lake', 'river', 'mountain', 'marker'];
 	var labels = [];
@@ -462,6 +485,7 @@ App.renderer.renderBiome = function(obj) {
 		bgPath.setAttribute('fill', params.bgColor);
 		bgPath.setAttribute('fill-opacity', String(params.bgOpacity));
 		bgPath.setAttribute('stroke', 'none');
+		bgPath.setAttribute('clip-path', 'url(#region-clip)');
 		g.appendChild(bgPath);
 	}
 
@@ -470,7 +494,7 @@ App.renderer.renderBiome = function(obj) {
 	var density = params.density || 0.5;
 	var elementScale = params.elementScale || 1.0;
 
-	var spacing = 12 / density;
+	var spacing = 7 / density;
 	var seed = App.state.map ? App.state.map.seed || 0 : 0;
 	var idx = 0;
 
@@ -624,55 +648,67 @@ App.renderer.renderBiomeElement = function(biomeType, x, y, rnd, seed, elementSc
 			fjG.appendChild(rock);
 			return fjG;
 		}
-		case 'desert': {
-			var desG = document.createElementNS(NS, 'g');
-			var dsc = es;
-			desG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + dsc.toFixed(2) + ')');
-			if (rnd > 0.6) {
-				var cactus = document.createElementNS(NS, 'path');
-				cactus.setAttribute('d', 'M0 0 L0 -8 M-3 -5 L-3 -3 L0 -3 M3 -6 L3 -4 L0 -4');
-				cactus.setAttribute('fill', 'none');
-				cactus.setAttribute('stroke', '#4a7a3a');
-				cactus.setAttribute('stroke-width', '2');
-				cactus.setAttribute('stroke-linecap', 'round');
-				desG.appendChild(cactus);
-			} else {
-				var dune = document.createElementNS(NS, 'path');
-				var dw = 5 + rnd * 5;
-				dune.setAttribute('d', 'M' + (-dw) + ' 0 Q0 ' + (-3 - rnd * 3) + ' ' + dw + ' 0');
-				dune.setAttribute('fill', '#d4b876');
-				dune.setAttribute('stroke', '#c4a866');
-				dune.setAttribute('stroke-width', '0.5');
-				desG.appendChild(dune);
-			}
-			return desG;
+		case 'dunes': {
+			var duG = document.createElementNS(NS, 'g');
+			var dusc = es;
+			duG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + dusc.toFixed(2) + ')');
+			var dune = document.createElementNS(NS, 'path');
+			var dw = 5 + rnd * 5;
+			dune.setAttribute('d', 'M' + (-dw) + ' 0 Q0 ' + (-3 - rnd * 3) + ' ' + dw + ' 0');
+			dune.setAttribute('fill', '#d4b876');
+			dune.setAttribute('stroke', '#c4a866');
+			dune.setAttribute('stroke-width', '0.5');
+			duG.appendChild(dune);
+			return duG;
+		}
+		case 'cactus': {
+			var caG = document.createElementNS(NS, 'g');
+			var casc = es;
+			caG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + casc.toFixed(2) + ')');
+			var cactus = document.createElementNS(NS, 'path');
+			cactus.setAttribute('d', 'M0 0 L0 -8 M-3 -5 L-3 -3 L0 -3 M3 -6 L3 -4 L0 -4');
+			cactus.setAttribute('fill', 'none');
+			cactus.setAttribute('stroke', '#4a7a3a');
+			cactus.setAttribute('stroke-width', '2');
+			cactus.setAttribute('stroke-linecap', 'round');
+			caG.appendChild(cactus);
+			return caG;
 		}
 		case 'jungle': {
 			var jscale = (0.8 + rnd * 0.7) * es;
 			var jG = document.createElementNS(NS, 'g');
 			jG.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + jscale.toFixed(2) + ')');
-			var jtrunk = document.createElementNS(NS, 'line');
-			jtrunk.setAttribute('x1', '0');
-			jtrunk.setAttribute('y1', '2');
-			jtrunk.setAttribute('x2', '0');
-			jtrunk.setAttribute('y2', '6');
-			jtrunk.setAttribute('stroke', '#5C3A1E');
-			jtrunk.setAttribute('stroke-width', '2.5');
+			var jtrunk = document.createElementNS(NS, 'path');
+			jtrunk.setAttribute('d', 'M0 6 Q1 0 2 -6');
+			jtrunk.setAttribute('fill', 'none');
+			jtrunk.setAttribute('stroke', '#7a5a2a');
+			jtrunk.setAttribute('stroke-width', '2');
+			jtrunk.setAttribute('stroke-linecap', 'round');
 			jG.appendChild(jtrunk);
-			var jcrown = document.createElementNS(NS, 'ellipse');
-			jcrown.setAttribute('cx', '0');
-			jcrown.setAttribute('cy', '-3');
-			jcrown.setAttribute('rx', '7');
-			jcrown.setAttribute('ry', '5');
-			jcrown.setAttribute('fill', '#1a6a1a');
-			jG.appendChild(jcrown);
+			var frondAngles = [-150, -120, -60, -30, 0, 30, 60];
 			var r3 = App.noise.seededRandom(seed + 55);
-			var jcrown2 = document.createElementNS(NS, 'circle');
-			jcrown2.setAttribute('cx', String(-3 + r3 * 2));
-			jcrown2.setAttribute('cy', '-5');
-			jcrown2.setAttribute('r', '4');
-			jcrown2.setAttribute('fill', '#2d8a2d');
-			jG.appendChild(jcrown2);
+			for (var fi = 0; fi < frondAngles.length; fi++) {
+				var angle = frondAngles[fi] + (r3 - 0.5) * 15;
+				var rad = angle * Math.PI / 180;
+				var fLen = 6 + rnd * 3;
+				var endX = 2 + Math.cos(rad) * fLen;
+				var endY = -6 + Math.sin(rad) * fLen;
+				var cpX = 2 + Math.cos(rad) * fLen * 0.6;
+				var cpY = -6 + Math.sin(rad) * fLen * 0.3;
+				var frond = document.createElementNS(NS, 'path');
+				frond.setAttribute('d', 'M2 -6 Q' + cpX.toFixed(1) + ' ' + cpY.toFixed(1) + ' ' + endX.toFixed(1) + ' ' + endY.toFixed(1));
+				frond.setAttribute('fill', 'none');
+				frond.setAttribute('stroke', '#2d8a2d');
+				frond.setAttribute('stroke-width', '1.5');
+				frond.setAttribute('stroke-linecap', 'round');
+				jG.appendChild(frond);
+			}
+			var coconuts = document.createElementNS(NS, 'circle');
+			coconuts.setAttribute('cx', '2');
+			coconuts.setAttribute('cy', '-5');
+			coconuts.setAttribute('r', '1.5');
+			coconuts.setAttribute('fill', '#8a6a2a');
+			jG.appendChild(coconuts);
 			return jG;
 		}
 		case 'savanna': {

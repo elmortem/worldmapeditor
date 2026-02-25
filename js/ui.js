@@ -174,7 +174,7 @@ App.ui.updateProperties = function() {
 				App.state.pushUndo();
 				obj.params.biomeType = val;
 				App.renderer.render();
-			}, ['tundra', 'taiga', 'swamp', 'forest', 'plains', 'fjord', 'desert', 'jungle', 'savanna', 'steppe']);
+			}, ['tundra', 'taiga', 'swamp', 'forest', 'plains', 'fjord', 'dunes', 'cactus', 'jungle', 'savanna', 'steppe']);
 			App.ui.addField(content, 'Density', 'range', params.density || 0.5, function(val) {
 				App.state.pushUndo();
 				obj.params.density = parseFloat(val);
