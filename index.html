@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>World Map Editor</title>
+	<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+	<div id="toolbar">
+		<button data-tool="select" class="tool-btn active" title="Select (V)">Select</button>
+		<button data-tool="region" class="tool-btn" title="Draw Region (R)">Region</button>
+		<button data-tool="river" class="tool-btn" title="Draw River (I)">River</button>
+		<button data-tool="mountain" class="tool-btn" title="Draw Mountain (M)">Mountain</button>
+		<button data-tool="sea" class="tool-btn" title="Draw Sea (S)">Sea</button>
+		<button data-tool="lake" class="tool-btn" title="Draw Lake (L)">Lake</button>
+		<button data-tool="biome" class="tool-btn" title="Draw Biome (B)">Biome</button>
+		<button data-tool="marker" class="tool-btn" title="Place Marker (P)">Marker</button>
+	</div>
+
+	<div id="main">
+		<div id="object-panel">
+			<div id="object-panel-header">Objects</div>
+			<div id="object-list"></div>
+		</div>
+
+		<div id="canvas-container">
+			<svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+				<defs id="svg-defs"></defs>
+				<g id="svg-world"></g>
+				<g id="svg-editor-overlay"></g>
+			</svg>
+		</div>
+
+		<div id="properties-panel">
+			<div id="properties-header">Properties</div>
+			<div id="properties-content"></div>
+		</div>
+	</div>
+
+	<div id="statusbar">
+		<span id="status-info">Objects: 0 | Zoom: 100%</span>
+		<div id="status-actions">
+			<button id="btn-snap" title="Snap region borders">Snap Borders</button>
+			<button id="btn-save" title="Ctrl+S">Save</button>
+			<button id="btn-save-as" title="Ctrl+Shift+S">Save As</button>
+			<button id="btn-load" title="Ctrl+O">Load</button>
+			<button id="btn-export" title="Ctrl+E">Export SVG</button>
+		</div>
+	</div>
+
+	<script src="libs/simplex-noise.js"></script>
+	<script src="js/state.js"></script>
+	<script src="js/spline.js"></script>
+	<script src="js/noise.js"></script>
+	<script src="js/renderer.js"></script>
+	<script src="js/editor.js"></script>
+	<script src="js/storage.js"></script>
+	<script src="js/ui.js"></script>
+	<script src="js/app.js"></script>
+</body>
+</html>
