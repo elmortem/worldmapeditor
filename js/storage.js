@@ -175,17 +175,19 @@ App.storage.getWorldBounds = function() {
 
 		var closed = App.state.isClosedType(obj.type);
 		var sampled = closed
-			? App.renderer.sampleClosedWithCache(obj.points)
+			? App.renderer.sampleClosed(obj.points)
 			: App.spline.sampleSpline(obj.points, App.renderer.SAMPLES_PER_SEGMENT, false);
 
 		if (closed) {
-			var params = obj.params || {};
-			var bn = params.borderNoise || {};
-			var freq = bn.frequency || 0.03;
-			var amp = bn.amplitude || 8;
-			var oct = bn.octaves || 3;
-			var displaced = App.renderer.displaceClosedWithCache(obj.points, seed, freq, amp, oct);
-			expandBounds(displaced);
+			var patchedDisplaced = App.renderer._patchedPolylines[obj.id];
+			if (patchedDisplaced) {
+				expandBounds(patchedDisplaced);
+			} else {
+				var params = obj.params || {};
+				var bn = params.borderNoise || {};
+				var displaced = App.noise.displacePoints(sampled, null, seed, bn.frequency || 0.03, bn.amplitude || 8, bn.octaves || 3);
+				expandBounds(displaced);
+			}
 		} else {
 			expandBounds(sampled);
 		}

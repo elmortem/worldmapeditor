@@ -7,54 +7,21 @@ App.renderer.SAMPLES_PER_SEGMENT = 20;
 App.renderer.SVG_NS = 'http://www.w3.org/2000/svg';
 
 App.renderer._segmentCache = {};
-App.renderer._displacedCache = {};
+App.renderer._patchedPolylines = {};
 
-App.renderer.makeSegmentKey = function(p0, p1) {
-	var precision = 10;
-	return Math.round(p0.x * precision) + ',' + Math.round(p0.y * precision) + ':' +
-		Math.round(p1.x * precision) + ',' + Math.round(p1.y * precision);
-};
-
-App.renderer.sampleSegmentCached = function(p0, p1) {
+App.renderer.sampleClosed = function(points) {
 	var sps = App.renderer.SAMPLES_PER_SEGMENT;
-	var key = App.renderer.makeSegmentKey(p0, p1);
-	var revKey = App.renderer.makeSegmentKey(p1, p0);
-
-	if (App.renderer._segmentCache[key]) {
-		return App.renderer._segmentCache[key];
-	}
-
-	if (App.renderer._segmentCache[revKey]) {
-		var cached = App.renderer._segmentCache[revKey];
-		var reversed = [];
-		for (var r = cached.length - 1; r >= 0; r--) {
-			reversed.push(cached[r]);
-		}
-		return reversed;
-	}
-
-	var cp0out = App.spline.getOutCP(p0);
-	var cp1in = App.spline.getInCP(p1);
-	var result = [];
-	for (var s = 0; s < sps; s++) {
-		var t = s / sps;
-		result.push(App.spline.cubicBezier(p0, cp0out, cp1in, p1, t));
-	}
-
-	App.renderer._segmentCache[key] = result;
-	return result;
-};
-
-App.renderer.sampleClosedWithCache = function(points) {
 	var allSampled = [];
 	var segCount = points.length;
 
 	for (var i = 0; i < segCount; i++) {
 		var p0 = points[i];
 		var p1 = points[(i + 1) % points.length];
-		var seg = App.renderer.sampleSegmentCached(p0, p1);
-		for (var k = 0; k < seg.length; k++) {
-			allSampled.push(seg[k]);
+		var cp0out = App.spline.getOutCP(p0);
+		var cp1in = App.spline.getInCP(p1);
+		for (var s = 0; s < sps; s++) {
+			var t = s / sps;
+			allSampled.push(App.spline.cubicBezier(p0, cp0out, cp1in, p1, t));
 		}
 	}
 
@@ -65,46 +32,189 @@ App.renderer.sampleClosedWithCache = function(points) {
 	return allSampled;
 };
 
-App.renderer.displaceClosedWithCache = function(points, seed, freq, amp, oct) {
-	var allDisplaced = [];
-	var segCount = points.length;
+App.renderer.computeSharedBorders = function() {
+	App.renderer._patchedPolylines = {};
 
-	for (var i = 0; i < segCount; i++) {
-		var p0 = points[i];
-		var p1 = points[(i + 1) % points.length];
-		var segKey = App.renderer.makeSegmentKey(p0, p1);
-		var revKey = App.renderer.makeSegmentKey(p1, p0);
+	if (!App.state.map) return;
 
-		if (App.renderer._displacedCache[segKey]) {
-			var cached = App.renderer._displacedCache[segKey];
-			for (var c = 0; c < cached.length; c++) {
-				allDisplaced.push(cached[c]);
-			}
-		} else if (App.renderer._displacedCache[revKey]) {
-			var cachedRev = App.renderer._displacedCache[revKey];
-			for (var r = cachedRev.length - 1; r >= 0; r--) {
-				allDisplaced.push(cachedRev[r]);
-			}
-		} else {
-			var sampled = App.renderer.sampleSegmentCached(p0, p1);
-			var displaced = App.noise.displacePoints(sampled, null, seed, freq, amp, oct);
-			App.renderer._displacedCache[segKey] = displaced;
-			for (var d = 0; d < displaced.length; d++) {
-				allDisplaced.push(displaced[d]);
+	var closedTypes = ['sea', 'region', 'lake'];
+	var layerPriority = { 'sea': 0, 'region': 1, 'lake': 2 };
+	var shapes = [];
+	var seed = App.state.map.seed || 0;
+
+	for (var oi = 0; oi < App.state.map.objects.length; oi++) {
+		var obj = App.state.map.objects[oi];
+		if (closedTypes.indexOf(obj.type) < 0) continue;
+		if (!obj.points || obj.points.length < 2) continue;
+
+		var sampled = App.renderer.sampleClosed(obj.points);
+
+		var params = obj.params || {};
+		var bn = params.borderNoise || {};
+		var freq = bn.frequency || 0.03;
+		var amp = bn.amplitude || 8;
+		var oct = bn.octaves || 3;
+		var displaced = App.noise.displacePoints(sampled, null, seed, freq, amp, oct);
+
+		var priority = layerPriority[obj.type] * 100000 + oi;
+
+		shapes.push({
+			obj: obj,
+			sampled: sampled,
+			displaced: displaced,
+			priority: priority
+		});
+	}
+
+	if (shapes.length < 2) {
+		for (var si = 0; si < shapes.length; si++) {
+			App.renderer._patchedPolylines[shapes[si].obj.id] = shapes[si].displaced;
+		}
+		return;
+	}
+
+	var threshold = App.state.snapThreshold || 20;
+
+	for (var si2 = 0; si2 < shapes.length; si2++) {
+		var loser = shapes[si2];
+		var N = loser.sampled.length - 1;
+
+		var bestSource = new Array(N);
+		var bestDist = new Array(N);
+		var bestJ = new Array(N);
+		for (var init = 0; init < N; init++) {
+			bestSource[init] = -1;
+			bestDist[init] = Infinity;
+			bestJ[init] = -1;
+		}
+
+		for (var wi = 0; wi < shapes.length; wi++) {
+			if (wi === si2) continue;
+			var winner = shapes[wi];
+			if (winner.priority <= loser.priority) continue;
+
+			var M = winner.sampled.length - 1;
+			for (var i = 0; i < N; i++) {
+				var px = loser.sampled[i].x;
+				var py = loser.sampled[i].y;
+				for (var j = 0; j < M; j++) {
+					var dx = px - winner.sampled[j].x;
+					var dy = py - winner.sampled[j].y;
+					var dist = Math.sqrt(dx * dx + dy * dy);
+					if (dist < bestDist[i] && dist < threshold) {
+						bestDist[i] = dist;
+						bestJ[i] = j;
+						bestSource[i] = wi;
+					}
+				}
 			}
 		}
+
+		var runs = [];
+		var inRun = false;
+		var runStart = 0;
+		var runSource = -1;
+		for (var ri = 0; ri < N; ri++) {
+			if (bestSource[ri] >= 0) {
+				if (!inRun || bestSource[ri] !== runSource) {
+					if (inRun) {
+						runs.push({ start: runStart, end: ri - 1, source: runSource });
+					}
+					runStart = ri;
+					runSource = bestSource[ri];
+					inRun = true;
+				}
+			} else {
+				if (inRun) {
+					runs.push({ start: runStart, end: ri - 1, source: runSource });
+					inRun = false;
+				}
+			}
+		}
+		if (inRun) {
+			runs.push({ start: runStart, end: N - 1, source: runSource });
+		}
+
+		var minRunLength = 3;
+		var validRuns = [];
+		for (var vr = 0; vr < runs.length; vr++) {
+			if (runs[vr].end - runs[vr].start + 1 >= minRunLength) {
+				validRuns.push(runs[vr]);
+			}
+		}
+
+		if (validRuns.length === 0) {
+			App.renderer._patchedPolylines[loser.obj.id] = loser.displaced;
+			continue;
+		}
+
+		var patched = [];
+		var idx = 0;
+		for (var pi = 0; pi < validRuns.length; pi++) {
+			var run = validRuns[pi];
+			for (var k = idx; k < run.start; k++) {
+				patched.push(loser.displaced[k]);
+			}
+			var winShape = shapes[run.source];
+			var jStart = bestJ[run.start];
+			var jEnd = bestJ[run.end];
+
+			var forward = true;
+			if (run.end > run.start) {
+				var jMid = bestJ[Math.floor((run.start + run.end) / 2)];
+				if (jEnd < jStart) {
+					forward = false;
+				} else if (jEnd === jStart) {
+					forward = (jMid >= jStart);
+				}
+			}
+
+			if (forward) {
+				if (jEnd >= jStart) {
+					for (var fj = jStart; fj <= jEnd; fj++) {
+						patched.push(winShape.displaced[fj]);
+					}
+				} else {
+					for (var fj2 = jStart; fj2 < winShape.displaced.length - 1; fj2++) {
+						patched.push(winShape.displaced[fj2]);
+					}
+					for (var fj3 = 0; fj3 <= jEnd; fj3++) {
+						patched.push(winShape.displaced[fj3]);
+					}
+				}
+			} else {
+				if (jStart >= jEnd) {
+					for (var rj = jStart; rj >= jEnd; rj--) {
+						patched.push(winShape.displaced[rj]);
+					}
+				} else {
+					for (var rj2 = jStart; rj2 >= 0; rj2--) {
+						patched.push(winShape.displaced[rj2]);
+					}
+					for (var rj3 = winShape.displaced.length - 2; rj3 >= jEnd; rj3--) {
+						patched.push(winShape.displaced[rj3]);
+					}
+				}
+			}
+
+			idx = run.end + 1;
+		}
+		for (var tail = idx; tail < loser.displaced.length; tail++) {
+			patched.push(loser.displaced[tail]);
+		}
+
+		App.renderer._patchedPolylines[loser.obj.id] = patched;
 	}
 
-	if (allDisplaced.length > 0) {
-		allDisplaced.push({ x: allDisplaced[0].x, y: allDisplaced[0].y });
+	for (var fi = 0; fi < shapes.length; fi++) {
+		if (!App.renderer._patchedPolylines[shapes[fi].obj.id]) {
+			App.renderer._patchedPolylines[shapes[fi].obj.id] = shapes[fi].displaced;
+		}
 	}
-
-	return allDisplaced;
 };
 
 App.renderer.render = function() {
 	App.renderer._segmentCache = {};
-	App.renderer._displacedCache = {};
 
 	var world = document.getElementById('svg-world');
 	var defs = document.getElementById('svg-defs');
@@ -113,6 +223,7 @@ App.renderer.render = function() {
 
 	if (!App.state.map) return;
 
+	App.renderer.computeSharedBorders();
 	App.renderer.renderDefs(defs);
 
 	var layerOrder = ['sea', 'region', 'biome', 'lake', 'river', 'mountain', 'marker'];
@@ -258,14 +369,14 @@ App.renderer.renderObject = function(obj) {
 App.renderer.renderClosedShape = function(obj, fillColor, extraAttrs) {
 	if (!obj.points || obj.points.length < 2) return null;
 
-	var params = obj.params || {};
-	var bn = params.borderNoise || {};
-	var freq = bn.frequency || 0.03;
-	var amp = bn.amplitude || 8;
-	var oct = bn.octaves || 3;
-
-	var seed = App.state.map ? App.state.map.seed || 0 : 0;
-	var displaced = App.renderer.displaceClosedWithCache(obj.points, seed, freq, amp, oct);
+	var displaced = App.renderer._patchedPolylines[obj.id];
+	if (!displaced) {
+		var sampled = App.renderer.sampleClosed(obj.points);
+		var params = obj.params || {};
+		var bn = params.borderNoise || {};
+		var seed = App.state.map ? App.state.map.seed || 0 : 0;
+		displaced = App.noise.displacePoints(sampled, null, seed, bn.frequency || 0.03, bn.amplitude || 8, bn.octaves || 3);
+	}
 	var d = App.spline.pointsToSvgPath(displaced, true);
 
 	var path = document.createElementNS(App.renderer.SVG_NS, 'path');
@@ -323,7 +434,7 @@ App.renderer.renderBiome = function(obj) {
 	g.setAttribute('data-id', obj.id);
 	g.setAttribute('opacity', String(params.opacity || 0.3));
 
-	var sampled = App.renderer.sampleClosedWithCache(obj.points);
+	var sampled = App.renderer.sampleClosed(obj.points);
 	var bounds = App.spline.getBounds(sampled);
 	var biomeType = params.biomeType || 'forest';
 	var density = params.density || 0.5;
@@ -809,24 +920,6 @@ App.renderer.hitTest = function(worldX, worldY) {
 	return null;
 };
 
-App.renderer.circDist = function(from, to, len) {
-	var d = to - from;
-	if (d < 0) d += len;
-	return d;
-};
-
-App.renderer.circRange = function(from, to, len) {
-	var result = [];
-	var i = from;
-	var safety = len + 1;
-	while (i !== to && safety-- > 0) {
-		result.push(i);
-		i = (i + 1) % len;
-	}
-	result.push(to);
-	return result;
-};
-
 App.renderer.snapRegionBorders = function() {
 	if (!App.state.map) return;
 
@@ -850,39 +943,12 @@ App.renderer.snapRegionBorders = function() {
 		}
 	}
 
-	for (var a2 = 0; a2 < regions.length; a2++) {
-		for (var b2 = a2 + 1; b2 < regions.length; b2++) {
-			App.renderer.equalizeSharedSegments(regions[a2], regions[b2]);
-		}
-	}
-
 	for (var r = 0; r < regions.length; r++) {
 		App.spline.autoSmoothAll(regions[r].points, true);
 	}
 
-	for (var a3 = 0; a3 < regions.length; a3++) {
-		for (var b3 = a3 + 1; b3 < regions.length; b3++) {
-			App.renderer.syncSharedHandles(regions[a3], regions[b3]);
-		}
-	}
-
 	App.renderer.render();
 	App.editor.updateOverlay();
-};
-
-App.renderer.findMatchedPoints = function(rA, rB, eps) {
-	var matches = [];
-	for (var i = 0; i < rA.points.length; i++) {
-		for (var j = 0; j < rB.points.length; j++) {
-			var dx = rA.points[i].x - rB.points[j].x;
-			var dy = rA.points[i].y - rB.points[j].y;
-			if (Math.sqrt(dx * dx + dy * dy) < eps) {
-				matches.push({ a: i, b: j });
-				break;
-			}
-		}
-	}
-	return matches;
 };
 
 App.renderer.snapPositions = function(rA, rB, threshold) {
@@ -907,208 +973,23 @@ App.renderer.snapPositions = function(rA, rB, threshold) {
 			var mx = (pA.x + target.x) / 2;
 			var my = (pA.y + target.y) / 2;
 
+			var dxA = mx - pA.x;
+			var dyA = my - pA.y;
 			pA.x = mx;
 			pA.y = my;
-			pA.cx1 = mx;
-			pA.cy1 = my;
-			pA.cx2 = mx;
-			pA.cy2 = my;
+			pA.cx1 += dxA;
+			pA.cy1 += dyA;
+			pA.cx2 += dxA;
+			pA.cy2 += dyA;
 
+			var dxB = mx - target.x;
+			var dyB = my - target.y;
 			target.x = mx;
 			target.y = my;
-			target.cx1 = mx;
-			target.cy1 = my;
-			target.cx2 = mx;
-			target.cy2 = my;
-		}
-	}
-};
-
-App.renderer.equalizeSharedSegments = function(rA, rB) {
-	var matches = App.renderer.findMatchedPoints(rA, rB, 0.1);
-	if (matches.length < 2) return;
-
-	var segments = [];
-	for (var mi = 0; mi < matches.length; mi++) {
-		var curr = matches[mi];
-		var next = matches[(mi + 1) % matches.length];
-
-		var aFrom = curr.a;
-		var aTo = next.a;
-		var bFrom = curr.b;
-		var bTo = next.b;
-
-		var aDist = App.renderer.circDist(aFrom, aTo, rA.points.length);
-		var bDistFwd = App.renderer.circDist(bFrom, bTo, rB.points.length);
-		var bDistRev = App.renderer.circDist(bTo, bFrom, rB.points.length);
-		var bReversed = bDistRev < bDistFwd;
-		var bDist = Math.min(bDistFwd, bDistRev);
-
-		if (aDist > rA.points.length / 2) continue;
-		if (bDist > rB.points.length / 2) continue;
-		if (aDist <= 1 && bDist <= 1) continue;
-		if (aDist === bDist) continue;
-
-		segments.push({
-			aFrom: aFrom, aTo: aTo,
-			bFrom: bFrom, bTo: bTo,
-			aDist: aDist, bDist: bDist,
-			bReversed: bReversed
-		});
-	}
-
-	if (segments.length === 0) return;
-
-	var aReplacements = [];
-	var bReplacements = [];
-
-	for (var si = 0; si < segments.length; si++) {
-		var seg = segments[si];
-		var aCount = seg.aDist - 1;
-		var bCount = seg.bDist - 1;
-
-		if (aCount < bCount) {
-			var bPath;
-			if (seg.bReversed) {
-				bPath = App.renderer.circRange(seg.bTo, seg.bFrom, rB.points.length).reverse();
-			} else {
-				bPath = App.renderer.circRange(seg.bFrom, seg.bTo, rB.points.length);
-			}
-			var newIntermediates = [];
-			for (var bi = 1; bi < bPath.length - 1; bi++) {
-				var sp = rB.points[bPath[bi]];
-				newIntermediates.push({ x: sp.x, y: sp.y });
-			}
-			aReplacements.push({
-				fromIndex: seg.aFrom,
-				toIndex: seg.aTo,
-				dist: seg.aDist,
-				newIntermediates: newIntermediates
-			});
-		} else {
-			var aPath = App.renderer.circRange(seg.aFrom, seg.aTo, rA.points.length);
-			var newIntermediatesB = [];
-			for (var ai = 1; ai < aPath.length - 1; ai++) {
-				var spA = rA.points[aPath[ai]];
-				newIntermediatesB.push({ x: spA.x, y: spA.y });
-			}
-			var bFromIdx = seg.bReversed ? seg.bTo : seg.bFrom;
-			var bToIdx = seg.bReversed ? seg.bFrom : seg.bTo;
-			bReplacements.push({
-				fromIndex: bFromIdx,
-				toIndex: bToIdx,
-				dist: seg.bDist,
-				newIntermediates: seg.bReversed ? newIntermediatesB.slice().reverse() : newIntermediatesB
-			});
-		}
-	}
-
-	if (aReplacements.length > 0) {
-		rA.points = App.renderer.rebuildPoints(rA.points, aReplacements);
-	}
-	if (bReplacements.length > 0) {
-		rB.points = App.renderer.rebuildPoints(rB.points, bReplacements);
-	}
-};
-
-App.renderer.rebuildPoints = function(originalPoints, replacements) {
-	var skipSet = {};
-	var insertAfterMap = {};
-
-	for (var r = 0; r < replacements.length; r++) {
-		var rep = replacements[r];
-		var range = App.renderer.circRange(rep.fromIndex, rep.toIndex, originalPoints.length);
-		for (var ri = 1; ri < range.length - 1; ri++) {
-			skipSet[range[ri]] = true;
-		}
-		insertAfterMap[rep.fromIndex] = rep.newIntermediates;
-	}
-
-	var result = [];
-	for (var i = 0; i < originalPoints.length; i++) {
-		if (skipSet[i]) continue;
-		result.push(originalPoints[i]);
-		if (insertAfterMap[i]) {
-			var pts = insertAfterMap[i];
-			for (var j = 0; j < pts.length; j++) {
-				result.push(App.spline.createPoint(pts[j].x, pts[j].y));
-			}
-		}
-	}
-
-	return result;
-};
-
-App.renderer.syncSharedHandles = function(rA, rB) {
-	var matches = App.renderer.findMatchedPoints(rA, rB, 0.1);
-	if (matches.length < 2) return;
-
-	for (var mi = 0; mi < matches.length; mi++) {
-		var curr = matches[mi];
-		var next = matches[(mi + 1) % matches.length];
-
-		var aFrom = curr.a;
-		var aTo = next.a;
-		var bFrom = curr.b;
-		var bTo = next.b;
-
-		var aDist = App.renderer.circDist(aFrom, aTo, rA.points.length);
-		if (aDist > rA.points.length / 2) continue;
-		if (aDist < 1) continue;
-
-		var bDistFwd = App.renderer.circDist(bFrom, bTo, rB.points.length);
-		var bDistRev = App.renderer.circDist(bTo, bFrom, rB.points.length);
-		var bReversed = bDistRev < bDistFwd;
-		var bDist = Math.min(bDistFwd, bDistRev);
-
-		if (aDist !== bDist) continue;
-
-		var aPath = App.renderer.circRange(aFrom, aTo, rA.points.length);
-		var bPath;
-		if (bReversed) {
-			bPath = App.renderer.circRange(bTo, bFrom, rB.points.length).reverse();
-		} else {
-			bPath = App.renderer.circRange(bFrom, bTo, rB.points.length);
-		}
-
-		if (aPath.length !== bPath.length) continue;
-
-		for (var pi = 0; pi < aPath.length; pi++) {
-			var ptA = rA.points[aPath[pi]];
-			var ptB = rB.points[bPath[pi]];
-
-			var isFirst = (pi === 0);
-			var isLast = (pi === aPath.length - 1);
-
-			if (!isFirst && !isLast) {
-				if (bReversed) {
-					ptB.cx1 = ptA.cx2;
-					ptB.cy1 = ptA.cy2;
-					ptB.cx2 = ptA.cx1;
-					ptB.cy2 = ptA.cy1;
-				} else {
-					ptB.cx1 = ptA.cx1;
-					ptB.cy1 = ptA.cy1;
-					ptB.cx2 = ptA.cx2;
-					ptB.cy2 = ptA.cy2;
-				}
-			} else if (isFirst) {
-				if (bReversed) {
-					ptB.cx1 = ptA.cx2;
-					ptB.cy1 = ptA.cy2;
-				} else {
-					ptB.cx2 = ptA.cx2;
-					ptB.cy2 = ptA.cy2;
-				}
-			} else if (isLast) {
-				if (bReversed) {
-					ptB.cx2 = ptA.cx1;
-					ptB.cy2 = ptA.cy1;
-				} else {
-					ptB.cx1 = ptA.cx1;
-					ptB.cy1 = ptA.cy1;
-				}
-			}
+			target.cx1 += dxB;
+			target.cy1 += dyB;
+			target.cx2 += dxB;
+			target.cy2 += dyB;
 		}
 	}
 };
