@@ -18,6 +18,9 @@ App.ui.initToolbar = function() {
 		});
 	}
 
+	document.getElementById('btn-new').addEventListener('click', function() {
+		App.storage.newMap();
+	});
 	document.getElementById('btn-save').addEventListener('click', function() {
 		App.storage.save();
 	});

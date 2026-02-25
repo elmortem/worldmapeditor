@@ -2,6 +2,26 @@ var App = App || {};
 
 App.storage = {};
 
+App.storage.newMap = function() {
+	App.state.map = App.state.createDefaultMap();
+	App.state.selectedObjectId = null;
+	App.state.selectedPointIndex = -1;
+	App.state.undoStack = [];
+	App.state.redoStack = [];
+	App.state.viewport = { x: 0, y: 0, zoom: 1.0 };
+	App.state.fileHandle = null;
+	App.noise.clearCache();
+	App.renderer.updateViewport();
+	App.renderer.render();
+	App.editor.updateOverlay();
+	if (App.ui) {
+		App.ui.updateObjectList();
+		App.ui.updateProperties();
+		App.ui.updateMapSeed();
+		App.ui.updateStatus();
+	}
+};
+
 App.storage.save = function() {
 	var json = JSON.stringify(App.state.map, null, 2);
 
