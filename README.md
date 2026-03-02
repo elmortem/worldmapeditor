@@ -1,3 +1,3 @@
 # World Map Editor
 
-Demo: [[https://makar.rs/apps/worldmapeditor]]
+Demo: [https://makar.rs/apps/worldmapeditor]
